@@ -37,7 +37,7 @@ To use the trained model, one can call the the method _get_donor_clustering_matr
 X_new = psc.get_donor_clustering_matrix(X, id)
 ```
 
-$X$ is a gene-by-cell matrix. The rows of this matrix are single cell identification strings (e.g., barcodes), the columns are genes, and the entris are gene expression levels.
+$X$ is a gene-by-cell matrix. The rows of this matrix are single cell identification strings (e.g., barcodes), the columns are genes, and the entries are gene expression levels.
 
 $id$ is a list/array containing donor IDs ordered by one-to-one correspondence to the rows of $X$.
 
