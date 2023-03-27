@@ -5,14 +5,19 @@ Phenotype Associated Single Cell Clustering with Autoencoder (PASCode).
 Python=3.9.0
 
 # Using the model
-## Model training
+## Create an instance
 
 ```python
+from pascode import PASCode
 psc = PASCode()
-psc.train(X_train, y_train)
+```
+Or,
+```python
+import pascode
+psc = pscode.PASCode()
 ```
 
-Or, to manually set hyperparameters:
+If want to manually set hyperparameters:
 ```python
 psc = PASCode(latent_dim=3, 
               n_clusters=30, 
@@ -21,14 +26,22 @@ psc = PASCode(latent_dim=3,
               device='cpu', 
               alpha=1,
               dropout=.2)
+```
 
+
+## Train
+```python
+psc.train(X_train, y_train)
+```
+If want to manually set hyperparameters:
+```python
 psc.train(epoch_pretrain=7,
           epoch_train=7,                
           batch_size=1024,
           lr=1e-4,
           require_pretrain_phase=True,
           require_train_phase=True)
-```
+```     
 
 ## Get donor-cluster-fraction matrix
 To use the trained model, one can call the the method _get_donor_clustering_matrix_ as follows. 
