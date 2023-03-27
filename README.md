@@ -6,13 +6,14 @@ Python=3.9.0
 
 # Using the model
 ## Model training
-'''python
+
+```python
 psc = PASCode()
 psc.train(X_train, y_train)
-'''
+```
 
 Or, to manually set hyperparameters:
-'''python
+```python
 psc = PASCode(latent_dim=3, 
               n_clusters=30, 
               lambda_cluster=.3, 
@@ -27,14 +28,14 @@ psc.train(epoch_pretrain=7,
           lr=1e-4,
           require_pretrain_phase=True,
           require_train_phase=True)
-'''
+```
 
 ## Get donor-cluster-fraction matrix
 To use the trained model, one can call the the method _get_donor_clustering_matrix_ as follows. 
 
-'''python
+```python
 X_new = psc.get_donor_clustering_matrix(X, id)
-'''
+```
 
 $X$ is a gene-by-cell matrix. The rows of this matrix are single cell identification strings (e.g., barcodes), the columns are genes, and the entris are gene expression levels.
 
