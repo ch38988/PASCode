@@ -17,7 +17,7 @@ import pascode
 psc = pscode.PASCode()
 ```
 
-If want to manually set hyperparameters:
+If wanting to manually set hyperparameters:
 ```python
 psc = PASCode(latent_dim=3, 
               n_clusters=30, 
