@@ -1,5 +1,3 @@
-
-#%%
 from .utils import *
 
 import torch
@@ -17,7 +15,6 @@ import seaborn
 from torch import nn
 import torch.nn.functional as F
 
-#%%
 ###############################################################################
 ################################ The PASCode Model  ###########################
 ###############################################################################
@@ -112,11 +109,13 @@ class PASCode():
             batch_size=batch_size,
             shuffle=True,
             drop_last=True)
+        
         if optimizer == 'adam':
             optimizer = torch.optim.Adam(self.ae.parameters(), lr=lr)
         elif optimizer == '?': # TODO
             NotImplemented
         rec_loss = []
+
         for epoch in range(epoch_pretrain):
             total_loss = 0
             for _, x in enumerate(train_loader):
@@ -128,8 +127,7 @@ class PASCode():
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            print("epoch {}\t loss={:.4f}".format(
-                epoch, total_loss/len(train_loader)))
+            print("epoch {}\t loss={:.4f}".format(epoch, total_loss/len(train_loader)))
             rec_loss.append(loss.item())
 
         print("Initializing cluster centroids...")
@@ -174,18 +172,18 @@ class PASCode():
                 y = torch.from_numpy(pd.get_dummies(y).to_numpy()).to(self.device)
                 # x2 = add_noise(x)  # for denoising AE
                 x_bar, q, z = self(x)
-                rec_ls = F.mse_loss(x_bar, x) # reconstruction loss
-                kl_ls = F.kl_div(q.log(), p[idx]) # intracluster loss/KL
+                rec_loss = F.mse_loss(x_bar, x) # reconstruction loss
+                kl_loss = F.kl_div(q.log(), p[idx]) # intracluster loss/KL
 
                 # phenotype entropy loss
                 wpheno = torch.matmul(torch.transpose(q,0,1), y.float()) + 1e-9 # weighted phenotype
                 scls = torch.sum(wpheno, 1) # axis=1, row sum
                 pcls = torch.div(wpheno, scls[:,None]) # probability of clusters
                 lpcls = pcls.log()
-                ent_ls = torch.mean(-1*torch.sum(pcls*lpcls, 1)) # -p*log(p)
+                ent_loss = torch.mean(-1*torch.sum(pcls*lpcls, 1))
                 
                 # total joint loss
-                loss = self.lambda_cluster*kl_ls + self.lambda_phenotype*ent_ls + rec_ls
+                loss = self.lambda_cluster*kl_loss + self.lambda_phenotype*ent_loss + rec_loss
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -195,16 +193,16 @@ class PASCode():
             self.ae.eval() # NOTE
             with torch.no_grad():
                 X_bar, Q, z = self(X_train)
-                rec_ls = F.mse_loss(X_bar, X_train)
+                rec_loss = F.mse_loss(X_bar, X_train)
                 assigns = assign_cluster(Q)
-                ent_ls = calc_entropy(assigns, y_train)
-                kl_ls = F.kl_div(Q.log(), p)
-                print("{:5} \t {:7.5f} \t {:7.5f} \t {:8.5f} \t  \t {:7.5f} "
-                    .format(epoch, loss.item(), kl_ls.item(), rec_ls.item(), ent_ls.item()))
-                loss_c.append(kl_ls.item())
-                loss_r.append(rec_ls.item())
-                loss_p.append(ent_ls.item())
-                loss_total.append(kl_ls.item() + ent_ls.item() + rec_ls.item())
+                ent_loss = calc_entropy(assigns, y_train)
+                kl_loss = F.kl_div(Q.log(), p)
+                print("{:5} \t {:7.5f} \t {:7.5f} \t {:8.5f} \t {:7.5f} "
+                    .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
+                loss_c.append(kl_loss.item())
+                loss_r.append(rec_loss.item())
+                loss_p.append(ent_loss.item())
+                loss_total.append(kl_loss.item() + ent_loss.item() + rec_loss.item())
 
     def get_embedding(self, X, reducer='umap'):
         r"""
@@ -328,8 +326,8 @@ class PASCode():
         Get donor cluster fraction matrix.
         
         Args:
-            X: gene expression. rows are cells
-            id: donor IDs with 1-1 correspondence to rows of X 
+            X: gene expression. rows are cells, columns are genes
+            id: a list/array. donor IDs with 1-1 correspondence to rows of X 
             
         Returns:
             the donor cluster fraction matrix
