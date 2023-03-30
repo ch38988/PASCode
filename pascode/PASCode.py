@@ -60,7 +60,39 @@ class PASCode():
         z, X_bar = self.ae(X)
         q = calc_q(z, self.clusters, self.alpha)
         return X_bar, q, z
-    
+
+    class _AE(nn.Module):
+        r"""
+        AutoEncoder module of PASCode.
+        """
+        def __init__(self, latent_dim, input_dim=None, dropout=.2):
+            super().__init__()
+
+            self.encoder = torch.nn.Sequential(
+                nn.Linear(input_dim, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, 512),
+                nn.ReLU(),
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Linear(256, latent_dim),
+            )
+            self.decoder = torch.nn.Sequential(
+                nn.Linear(latent_dim, 256),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                nn.Linear(256, 512),
+                nn.ReLU(),
+                nn.Linear(512, 1024),
+                nn.ReLU(),
+                nn.Linear(1024, input_dim)
+            )
+        
+        def forward(self, x):
+            z = self.encoder(x)
+            x_hat = self.decoder(z)
+            return z, x_hat
+        
     def init_ae(self, X_train):
         r"""
         A helper function for creating the ae attribute in order for pretrained
@@ -69,7 +101,7 @@ class PASCode():
         self.ae = self._AE(
             input_dim=X_train.shape[1],
             latent_dim=self.latent_dim,
-            dropout=self.dropout)
+            dropout=self.dropout).to(self.device)
 
     def train(self,
             X_train, 
@@ -80,6 +112,8 @@ class PASCode():
             lr=1e-4,
             require_pretrain_phase=True,
             require_train_phase=True, 
+            print_metrics=True, # print metrics per epoch
+            id_train=None, X_test=None, y_test=None, id_test=None # for printing out metrics per epoch
         ):
         r"""
         Train PASCode model, including pretraining phase and training phases
@@ -90,6 +124,13 @@ class PASCode():
             y_train: 
         """
         self.init_ae(X_train)
+        self.print_metrics = print_metrics
+        if not (id_train==None and X_test==None and y_test==None and id_test==None):
+            self.id_train = id_train
+            self.X_test = X_test
+            self.y_test = y_test
+            self.id_test = id_test
+            
         if require_pretrain_phase:
             print("Pretraining...")
             self._pretrain(X_train, lr, epoch_pretrain, batch_size)
@@ -139,7 +180,8 @@ class PASCode():
         km.fit_predict(z.data.cpu().numpy())
         self.clusters.data = torch.tensor(km.cluster_centers_).to(self.device)
 
-    def _train(self, X_train, y_train, lr, epoch_train, batch_size):
+    def _train(self, X_train, y_train, lr, epoch_train, batch_size,
+            id_train=None, X_test=None, y_test=None, id_test=None):
         r"""
         Training phase.
         """
@@ -150,11 +192,11 @@ class PASCode():
             shuffle=True, 
             drop_last=True)
 
-        # for temp eval
-        loss_c = []
-        loss_r =  []
-        loss_p = []
-        loss_total = []
+        # # for temp eval
+        # loss_c = []
+        # loss_r =  []
+        # loss_p = []
+        # loss_total = []
 
         # train
         optimizer = torch.optim.Adam(self.ae.parameters(), lr=lr)
@@ -199,10 +241,14 @@ class PASCode():
                 kl_loss = F.kl_div(Q.log(), p)
                 print("{:5} \t {:7.5f} \t {:7.5f} \t {:8.5f} \t {:7.5f} "
                     .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
-                loss_c.append(kl_loss.item())
-                loss_r.append(rec_loss.item())
-                loss_p.append(ent_loss.item())
-                loss_total.append(kl_loss.item() + ent_loss.item() + rec_loss.item())
+                # loss_c.append(kl_loss.item())
+                # loss_r.append(rec_loss.item())
+                # loss_p.append(ent_loss.item())
+                # loss_total.append(kl_loss.item() + ent_loss.item() + rec_loss.item())
+                
+                # print out metrics on training and test data
+                if self.print_metrics:
+                    self.evaluate(X_train, y_train, self.id_train, self.X_test, self.y_test, self.id_test)
 
     def get_embedding(self, X, reducer='umap'):
         r"""
@@ -349,34 +395,42 @@ class PASCode():
         dcf_mat = dcf_mat.div(dcf_mat.sum(axis=1), axis=0)
         return dcf_mat
 
-    class _AE(nn.Module):
-            r"""
-            AutoEncoder module of PASCode.
-            """
-            def __init__(self, latent_dim, input_dim=None, dropout=.2):
-                super().__init__()
+    def evaluate(self, X_train, y_train, id_train, X_test, y_test, id_test):
+        # get donor cluster fraction matrix from traininig data
+        X_new_train = self.get_donor_cluster_fraction_matrix(X_train, id_train)
+        # get donor labels
+        info_train = pd.DataFrame({
+            'id':id_train,
+            'label':y_train
+        })
+        y_true_train = info_train.groupby(['id', 'label']).size().index.to_frame()['label'].to_list()
 
-                self.encoder = torch.nn.Sequential(
-                    nn.Linear(input_dim, 1024),
-                    nn.ReLU(),
-                    nn.Linear(1024, 512),
-                    nn.ReLU(),
-                    nn.Linear(512, 256),
-                    nn.ReLU(),
-                    nn.Linear(256, latent_dim),
-                )
-                self.decoder = torch.nn.Sequential(
-                    nn.Linear(latent_dim, 256),
-                    nn.ReLU(),
-                    nn.Dropout(dropout),
-                    nn.Linear(256, 512),
-                    nn.ReLU(),
-                    nn.Linear(512, 1024),
-                    nn.ReLU(),
-                    nn.Linear(1024, input_dim)
-                )
-            
-            def forward(self, x):
-                z = self.encoder(x)
-                x_hat = self.decoder(z)
-                return z, x_hat
+        # get donor cluster fraction matrix from testing data
+        X_new_test = self.get_donor_cluster_fraction_matrix(X_test, id_test)
+        # get donor labels 
+        info_test = pd.DataFrame({
+            'id':id_test,
+            'label':y_test
+        })
+        y_true_test = info_test.groupby(['id', 'label']).size().index.to_frame()['label'].to_list()
+
+        # training data
+        # clf = LogisticRegression().fit(X_new_train, y_true_train)
+        clf = RandomForestClassifier().fit(X_new_train, y_true_train)
+        y_pred_train = clf.predict(X_new_train)
+
+        print("############ Training data #############")
+        print("Precision:", precision_score(y_true_train, y_pred_train))
+        print("Recall score:", recall_score(y_true_train, y_pred_train))
+        print("F1 score:", f1_score(y_true_train, y_pred_train))
+        print("Accuracy:", accuracy_score(y_true_train, y_pred_train))
+        print("ROC-AUC score:", roc_auc_score(y_true_train, clf.predict_proba(X_new_train)[:, 1]))
+        print()
+        # test data
+        y_pred_test = clf.predict(X_new_test)
+        print("############ Testing data #############")
+        print("Precision:", precision_score(y_true_test, y_pred_test))
+        print("Recall score:", recall_score(y_true_test, y_pred_test))
+        print("F1 score:", f1_score(y_true_test, y_pred_test))
+        print("Accuracy:", accuracy_score(y_true_test, y_pred_test))
+        print("ROC-AUC score:", roc_auc_score(y_true_test, clf.predict_proba(X_new_test)[:, 1]))
