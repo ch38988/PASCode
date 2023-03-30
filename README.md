@@ -57,3 +57,15 @@ $X$ is a gene-by-cell matrix. The rows of this matrix are single cell identifica
 $id$ is a list/array containing donor IDs ordered by one-to-one correspondence to the rows of $X$.
 
 Returned is a matrix of which the rows are donor IDs, the columns are cluster indices, and the entries are fraction values of the number of cells a donor has in a cluster. 
+
+## Visualization
+
+```python
+embd_train = psc.get_embedding(X_train, reducer='umap')
+embd_test = psc.get_embedding(X_test, reducer='umap')
+```
+
+```python
+# On training data
+psc.plot_embedding(X=embd_train, y=lab_train['AD'].values, label='AD', title='AD (train)', require_distinguishable_colors=False)
+```     
