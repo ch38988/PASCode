@@ -17,7 +17,7 @@ import pascode
 psc = pscode.PASCode()
 ```
 
-To manually set hyperparameters:
+To set hyperparameters:
 ```python
 psc = PASCode(latent_dim=3, 
               n_clusters=30, 
@@ -33,9 +33,11 @@ psc = PASCode(latent_dim=3,
 ```python
 psc.train(X_train, y_train)
 ```
-To manually set hyperparameters:
+To set hyperparameters:
 ```python
-psc.train(epoch_pretrain=7,
+psc.train(X_train,
+          y_train,
+          epoch_pretrain=7,
           epoch_train=7,                
           batch_size=1024,
           lr=1e-4,
