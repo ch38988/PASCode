@@ -1,11 +1,10 @@
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.data import Dataset
 import warnings
 warnings.filterwarnings("ignore")
 
-from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, roc_auc_score
-from sklearn.ensemble import RandomForestClassifier
 
 def assign_cluster(q):
     r"""
