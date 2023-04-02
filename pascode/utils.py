@@ -1,17 +1,11 @@
-"""
-version: Nov 17
-version: Nov 22
-
-"""
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 import warnings
 warnings.filterwarnings("ignore")
 
-#%%
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device('cpu')
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, roc_auc_score
+from sklearn.ensemble import RandomForestClassifier
 
 def assign_cluster(q):
     r"""
@@ -76,8 +70,8 @@ def gaussian_kernel_dist(dist):
     NOTE define the distance func.;define diff. kernels, e.g., gaussian kernel; 
     on original space or reconstructed space??
     """
-    sigmas = torch.FloatTensor([1e-2,1e-1,1,10]).to(device)
-    beta = 1. / (2. * sigmas).to(device)
+    sigmas = torch.FloatTensor([1e-2,1e-1,1,10])
+    beta = 1. / (2. * sigmas)
     s = torch.matmul(torch.reshape(beta,(len(sigmas),1)),torch.reshape(dist,(1,-1)))
     return torch.reshape(torch.sum(torch.exp(-s),dim=0),dist.size())/len(sigmas)
 
@@ -109,7 +103,7 @@ def add_noise(d): # for denoising AE
     r"""
     TODO self adding rand noise ? ref: Vincent et al. 2010 in DEC.
     """
-    noise = 0.0*torch.randn(d.size()).to(device)    # TODO 0.0?
+    noise = 0.0*torch.randn(d.size())    # TODO 0.0?
     nd = d + noise
     return nd
 
@@ -122,7 +116,6 @@ def get_id_pheno(lab, pheno_name):
     id_pheno = group.index.to_frame()
     return id_pheno
 
-#
 class subDataset(Dataset):
     def __init__(self, x, y):
         self.x = x
@@ -138,155 +131,6 @@ class subDataset(Dataset):
         """
         Loads and returns a sample from the dataset at the given index idx.
         """
-        return self.x[idx].to(device), \
-               self.y[idx].to(device), \
-               torch.tensor(idx).to(torch.int64).to(device)
-
-# ###################################################
-
-# class trnDatasetNew(Dataset):
-#     def __init__(self):
-#         ann01 = sc.read_h5ad('/home/che82/project/PED2/rosmap.h5ad')
-#         sc.pp.highly_variable_genes(ann01)
-#         meta = ann01.obs
-#         hvg=ann01[:,ann01.var.highly_variable]
-#         #hvg = ann01
-#         scores = meta['braaksc']
-        
-#         sid = scores.isin([1,6])
-#         sx = hvg[sid].X.toarray()
-#         scaler = preprocessing.StandardScaler().fit(sx)
-#         tscores = scores[sid]#;tscores[tscores==6]=1
-
-#         self.x = torch.from_numpy(scaler.transform(sx)).float()  #should transform together...
-#         self.y = torch.from_numpy(np.array(tscores))
-#         self.dns = hvg[sid].obs['Subject']
-#         self.ctp = hvg[sid].obs['ceradsc']
-#         self.braaksc = hvg[sid].obs['braaksc']
-#     def __len__(self):
-#          return self.x.shape[0]
-#     def __getitem__(self, idx):
-#         return torch.from_numpy(np.array(self.x[idx])).to(device), torch.from_numpy(np.array(self.y[idx])).to(device), torch.from_numpy(np.array(idx)).long().to(device)
-        
-# class tstDatasetNew(Dataset):
-#     def __init__(self):
-#         ann01 = sc.read_h5ad('/home/che82/project/PED2/rosmap.h5ad')
-#         sc.pp.highly_variable_genes(ann01)
-#         meta = ann01.obs
-#         hvg=ann01[:,ann01.var.highly_variable]
-#         #hvg = ann01
-#         scores = meta['braaksc']
-        
-#         sid = scores.isin([1,2,3,4,5,6])
-#         sx = hvg[sid].X.toarray()
-#         scaler = preprocessing.StandardScaler().fit(sx)
-#         tscores = scores[sid]#;tscores[tscores==6]=1
-
-#         self.x = torch.from_numpy(scaler.transform(sx)).float()  #should transform together...
-#         self.y = torch.from_numpy(np.array(tscores))
-#         self.dns = hvg[sid].obs['Subject']
-#         self.ctp = hvg[sid].obs['ceradsc']
-#         self.braaksc = hvg[sid].obs['braaksc']
-#     def __len__(self):
-#          return self.x.shape[0]
-#     def __getitem__(self, idx):
-#         return torch.from_numpy(np.array(self.x[idx])).to(device), torch.from_numpy(np.array(self.y[idx])).to(device), torch.from_numpy(np.array(idx)).long().to(device)
-        
-
-# class tstDatasetNewTest(Dataset):
-#     def __init__(self):
-#         ann02 = sc.read_h5ad('/home/che82/project/PED2/rosmap.h5ad')
-#         #sc.pp.highly_variable_genes(ann02)
-#         meta = ann02.obs
-#         hvg=ann02[:,ann02.var.highly_variable]
-
-#         scores = meta['braaksc']
-        
-#         sid = scores.isin([1,2,3,4,5,6])
-#         sx = hvg[sid].X.toarray()
-#         scaler = preprocessing.StandardScaler().fit(sx)
-#         tscores = scores[sid]#;tscores[tscores==6]=1
-
-#         self.x = torch.from_numpy(scaler.transform(sx)).float()  #should transform together...
-#         self.y = torch.from_numpy(np.array(tscores))
-#         self.dns = hvg[sid].obs['Subject']
-#         self.ctp = hvg[sid].obs['ceradsc']
-#         self.braaksc = hvg[sid].obs['braaksc']
-#     def __len__(self):
-#          return self.x.shape[0]
-#     def __getitem__(self, idx):
-#         return torch.from_numpy(np.array(self.x[idx])).to(device), torch.from_numpy(np.array(self.y[idx])).to(device), torch.from_numpy(np.array(idx)).long().to(device)
-#
-# def read_prep(data_path, op):
-#     """
-#     Read raw data.
-    
-#     Args:
-#         op: 0 - gene expression matrix
-#             1 - MIT
-#             2 - 
-#     """
-#     print('Reading data...')
-
-#     if op == 0:
-#         X = pyreadr.read_r(data_path[0])
-#         print('Preprocessing data...')
-#         lab = pd.read_csv(data_path[1])
-#         X =  X[None].T
-#         X = StandardScaler().fit_transform(X)
-#         X = pd.DataFrame(X)
-#     if op == 1:
-#         rdata = pyreadr.read_r("/home/athan/scACC/data/mit.self.org.RData")
-#         print('Preprocessing data...')
-#         gxp = pd.concat([rdata['gexpr_AD'], rdata['gexpr_CTL']])
-#         lab = pd.concat([rdata['AD_cells'], rdata['CTL_cells']])
-#         # phenotype is AD(1)/CTL(0)
-#         lab['AD'] = [1]*rdata['gexpr_AD'].shape[0] + [0]*rdata['gexpr_CTL'].shape[0]
-#         lab.index = lab.TAG
-#         # select Highly Variable Genes from gene expression data
-#         print("Selecting HVGs...")
-#         agxp = anndata.AnnData(gxp)
-#         sc.pp.highly_variable_genes(agxp, min_mean=.0125, max_mean=3, min_disp=.25)
-#         gxp = gxp.loc[:, agxp.var.highly_variable]
-#         # scaling 
-#         print("Scaling...")
-#         scaler = preprocessing.StandardScaler().fit(gxp)
-#         scaled_features = scaler.transform(gxp)
-#         X = pd.DataFrame(scaled_features, columns=gxp.columns, index=gxp.index)
-#     if op == 2:
-#         pass
-
-#     print('Data preprocessing complete.\n')
-#     return X, lab
-
-# def get_sp_pheno(lab, op):
-#     """
-#     Set 1-1 correspondence between samples and the chosen phenotype.
-
-#     Args:
-#         pheno: the chosen phenotype name (string)
-#         lab: lab data.
-#         op: 0 - gene expression matrix
-#         op: 1 - MIT
-#     Returns:
-#         sample id list and phenotype label list. 
-#     """
-#     if op == 0:
-#         if pheno == 'Diagnosis':
-#             lab['Diagnosis'] = lab['Diagnosis'].map({'Control':0, 'AD':1})
-#         if pheno == 'pathology.group':
-#             lab['pathology.group'] = lab['pathology.group'].map({
-#                 'no-pathology':0,
-#                 'early-pathology':1,
-#                 'late-pathology':2})
-#         if pheno == 'braaksc':
-#             pass  # important: for braaksc TODO
-#     if op == 1:
-#         sample = 'subjectID'
-#         pheno = 'AD'
-#    
-#     group = group[group>0] # filtering
-#     sample = list(group.index.to_frame()[sample])
-#     pheno = list(group.index.to_frame()[pheno])
-
-#     return sample, pheno
+        return self.x[idx], \
+               self.y[idx], \
+               torch.tensor(idx).to(torch.int64)
