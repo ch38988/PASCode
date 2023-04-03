@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score, accuracy_score, roc_auc_score, precision_score, recall_score
 from IPython.display import clear_output
 
 import umap
@@ -116,8 +117,8 @@ class PASCode():
             lr_train=1e-5,
             require_pretrain_phase=True,
             require_train_phase=True, 
-            print_evaluation=True, # print metrics per epoch
             evaluation=True,
+            plot_evaluation=True, # plot metics per epoch
             id_train=None, X_test=None, y_test=None, id_test=None # for printing out metrics per epoch
         ):
         r"""
@@ -132,7 +133,8 @@ class PASCode():
         y_train = y_train.to(self.device)
 
         self.init_ae(X_train)
-        self.print_evaluation = print_evaluation
+        self.evaluation = evaluation
+        self.plot_evaluation = plot_evaluation
         # if  not (id_train==None and X_test==None and y_test==None and id_test==None).all():
         self.id_train = id_train
         self.X_test = X_test
@@ -145,7 +147,7 @@ class PASCode():
             print("Pretraining complete.\n")
         if require_train_phase:
             print('Training...')
-            self._train(X_train, y_train, lr=lr_train, epoch_train=epoch_train, batch_size=batch_size, evaluation=evaluation)
+            self._train(X_train, y_train, lr=lr_train, epoch_train=epoch_train, batch_size=batch_size)
             print("Training complete.\n")
 
     def _pretrain(self, X_train, lr, epoch_pretrain, batch_size, optimizer='adam'):
@@ -177,7 +179,7 @@ class PASCode():
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            print("epoch {}\t loss={:.4f}".format(epoch, total_loss/len(train_loader)))
+            print("epoch {}\t\t loss={:.4f}".format(epoch, total_loss/len(train_loader)))
             rec_loss.append(loss.item())
 
         print("Initializing cluster centroids...")
@@ -189,7 +191,7 @@ class PASCode():
         km.fit_predict(z.data.cpu().numpy())
         self.clusters.data = torch.tensor(km.cluster_centers_).to(self.device)
 
-    def _train(self, X_train, y_train, lr, epoch_train, batch_size, evaluation):
+    def _train(self, X_train, y_train, lr, epoch_train, batch_size):
         r"""
         Training phase.
         """
@@ -220,7 +222,6 @@ class PASCode():
         X_train = X_train.to(self.device)
         y_train = y_train.to(self.device)
 
-
         # train
         optimizer = torch.optim.Adam(self.ae.parameters(), lr=lr)
         for epoch in range(epoch_train):
@@ -232,18 +233,12 @@ class PASCode():
             self.ae.train()
             for x, y, idx in train_loader:
                 x = x.to(self.device)
-                y = torch.tensor(pd.get_dummies(y.cpu().numpy()).to_numpy()).to(self.device)
                 # x2 = add_noise(x)  # for denoising AE
                 x_bar, q, _ = self(x)
-                rec_loss = F.mse_loss(x_bar, x) # reconstruction loss
-                kl_loss = F.kl_div(q.log(), p[idx]) # intracluster loss/KL
-
+                rec_loss = F.mse_loss(x_bar, x) # AE reconstruction loss
+                kl_loss = F.kl_div(q.log(), p[idx], reduction='batchmean') # KL-div loss # NOTE "reduction = 'mean' doesn’t return the true kl divergence value, please use reduction = 'batchmean' which aligns with KL math definition. In the next major release, 'mean' will be changed to be the same as ‘batchmean’."
                 # phenotype entropy loss
-                wpheno = torch.matmul(torch.transpose(q,0,1), y.float()) + 1e-9 # weighted phenotype
-                scls = torch.sum(wpheno, 1) # axis=1, row sum
-                pcls = torch.div(wpheno, scls[:,None]) # probability of clusters
-                lpcls = pcls.log()
-                ent_loss = torch.mean(-1*torch.sum(pcls*lpcls, 1))
+                ent_loss = calc_entropy(q, y)
                 
                 # total joint loss
                 loss = self.lambda_cluster*kl_loss + self.lambda_phenotype*ent_loss + rec_loss
@@ -258,7 +253,7 @@ class PASCode():
                 # print("{:5} \t {:7.5f} \t\t {:7.5f} \t {:8.5f} \t \t {:7.5f} "
                 #     .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
                             
-            if evaluation:
+            if self.evaluation:
                 self.evaluate(X_train, y_train, epoch)
 
 
@@ -272,6 +267,7 @@ class PASCode():
         Returns:
             embedding as a numpy array
         """
+        X = X.to(self.device)
         z, _ = self.ae(X)
         z = z.detach().cpu().numpy()
         if self.latent_dim > 2 and reducer=='umap': 
@@ -403,11 +399,11 @@ class PASCode():
 
         self.ae.eval()
         with torch.no_grad():
-            X_bar, Q, z = self(X_train)
+            X_bar, q, _ = self(X_train)
             rec_loss = F.mse_loss(X_bar, X_train)
-            assigns = assign_cluster(Q)
-            ent_loss = calc_entropy(assigns, torch.tensor(y_train, device=self.device)) # numpy type
-            kl_loss = F.kl_div(Q.log(), self.P)
+            assigns = assign_cluster(q)
+            ent_loss = calc_entropy(assigns, torch.tensor(y_train).to(self.device))
+            kl_loss = F.kl_div(q.log(), self.P)
 
             self.loss_c.append(kl_loss.item())
             self.loss_r.append(rec_loss.item())
@@ -415,7 +411,7 @@ class PASCode():
             self.loss_total.append(kl_loss.item() + ent_loss + rec_loss.item())
 
         # plot
-        if self.print_evaluation:
+        if self.plot_evaluation:
             epochs = np.arange(1, epoch+2)
             clear_output(wait=True)
             fig, axes = plt.subplots(nrows=3, ncols=3, figsize=(12, 12))

@@ -5,18 +5,15 @@ from torch.utils.data import Dataset
 import warnings
 warnings.filterwarnings("ignore")
 
-
 def assign_cluster(q):
     r"""
-    Assign cluster of cells based on softmax.
+    Assign cells to clusters based on softmax.
     
     Args:
         matrix q where q_{ij} measures the probability that embedded point z_i
-        belongs to centroid j
-    Shape:
-        num_cells * num_clusters
+        belongs to centroid j. (q.shape == [num_cells, num_clusters])
     Returns:
-        max probabilities of assignments of embedded points
+        assigned clusters of cells
     """
     return torch.max(q, 1)[1]
 
@@ -40,39 +37,32 @@ def target_distribution(q):
     weight = q**2 / q.sum(0)
     return (weight.t() / weight.sum(1)).t()
 
-def calc_entropy(assigns, y): 
-    r"""Mean entropy of clusters' Y label.
-
-    For all points assigned to a cluster centroid in the embedded space,
-    compute the entropy of their phenotype (e.g. AD or CTL), and
-    returns the mean entropy.
-
-    TODO    not the best option, 
-            change utils.assign_cluster output as matrix will be better
-    
+def calc_entropy(q, y): 
+    r"""
     Ags:
-        assigns: assignments of input data points to cluster centroids
-        y: labels of input data
+        q: 
+        y: 
     """
-    ent = []
-    for centroid in torch.unique(assigns):
-        cts = torch.unique(y[assigns==centroid], return_counts=True)[1]
-        p = cts / torch.sum(cts)
-        t = -1 * torch.sum(p*torch.log(p))
-        ent.append(t.detach().cpu().numpy().item())
-    return np.mean(ent)
+    assigns = assign_cluster(q)
+    centroids = torch.unique(assigns) # assigned centroids
+    ent = 0
+    for centroid in centroids:
+        counts = torch.unique(y[assigns==centroid], return_counts=True)[1]
+        p = counts / torch.sum(counts)
+        ent += torch.sum(-p*torch.log(p))
+    return ent / centroids.shape[0]
 
-def gaussian_kernel_dist(dist):
-    """
-    multi-RBF kernel
+# def gaussian_kernel_dist(dist):
+#     """
+#     multi-RBF kernel
     
-    NOTE define the distance func.;define diff. kernels, e.g., gaussian kernel; 
-    on original space or reconstructed space??
-    """
-    sigmas = torch.FloatTensor([1e-2,1e-1,1,10])
-    beta = 1. / (2. * sigmas)
-    s = torch.matmul(torch.reshape(beta,(len(sigmas),1)),torch.reshape(dist,(1,-1)))
-    return torch.reshape(torch.sum(torch.exp(-s),dim=0),dist.size())/len(sigmas)
+#     NOTE define the distance func.;define diff. kernels, e.g., gaussian kernel; 
+#     on original space or reconstructed space??
+#     """
+#     sigmas = torch.FloatTensor([1e-2,1e-1,1,10])
+#     beta = 1. / (2. * sigmas)
+#     s = torch.matmul(torch.reshape(beta,(len(sigmas),1)),torch.reshape(dist,(1,-1)))
+#     return torch.reshape(torch.sum(torch.exp(-s),dim=0),dist.size())/len(sigmas)
 
 def calc_q(z, cluster_centroids, alpha=1):
     r"""
@@ -133,3 +123,4 @@ class subDataset(Dataset):
         return self.x[idx], \
                self.y[idx], \
                torch.tensor(idx).to(torch.int64)
+    
