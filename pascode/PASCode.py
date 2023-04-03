@@ -401,14 +401,13 @@ class PASCode():
         with torch.no_grad():
             X_bar, q, _ = self(X_train)
             rec_loss = F.mse_loss(X_bar, X_train)
-            assigns = assign_cluster(q)
-            ent_loss = calc_entropy(assigns, torch.tensor(y_train).to(self.device))
+            ent_loss = calc_entropy(q, torch.tensor(y_train).to(self.device))
             kl_loss = F.kl_div(q.log(), self.P)
 
             self.loss_c.append(kl_loss.item())
             self.loss_r.append(rec_loss.item())
-            self.loss_p.append(ent_loss)
-            self.loss_total.append(kl_loss.item() + ent_loss + rec_loss.item())
+            self.loss_p.append(ent_loss.item())
+            self.loss_total.append(kl_loss.item() + ent_loss.item() + rec_loss.item())
 
         # plot
         if self.plot_evaluation:
