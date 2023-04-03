@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 import warnings
 warnings.filterwarnings("ignore")
 
-from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, roc_auc_score
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, roc_auc_score, balanced_accuracy_score
 from sklearn.ensemble import RandomForestClassifier
 
 #%%

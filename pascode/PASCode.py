@@ -10,6 +10,8 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from sklearn.linear_model import LogisticRegression
+
 import umap
 import seaborn
 from torch import nn
@@ -37,7 +39,7 @@ class PASCode():
             n_clusters=30, 
             lambda_cluster=.3, 
             lambda_phenotype=.7, 
-            device='cpu', 
+            device='cpu',  # cuda
             alpha=1,
             dropout=.2
         ):
@@ -123,13 +125,16 @@ class PASCode():
                 and entries are gene expression levels
             y_train: 
         """
+        X_train = X_train.to(self.device)
+        y_train = y_train.to(self.device)
+
         self.init_ae(X_train)
         self.print_metrics = print_metrics
-        if not (id_train==None and X_test==None and y_test==None and id_test==None):
-            self.id_train = id_train
-            self.X_test = X_test
-            self.y_test = y_test
-            self.id_test = id_test
+        # if  not (id_train==None and X_test==None and y_test==None and id_test==None).all():
+        self.id_train = id_train
+        self.X_test = X_test
+        self.y_test = y_test
+        self.id_test = id_test
             
         if require_pretrain_phase:
             print("Pretraining...")
@@ -145,6 +150,8 @@ class PASCode():
         Pretraining phase.
         Train the AE module in PASCode and initialize cluster self.. 
         """
+        X_train = X_train.to(self.device)
+
         train_loader = torch.utils.data.DataLoader(
             X_train,
             batch_size=batch_size,
@@ -160,7 +167,7 @@ class PASCode():
         for epoch in range(epoch_pretrain):
             total_loss = 0
             for _, x in enumerate(train_loader):
-                x = x.to(device)
+                x = x.to(self.device)
                 # x_noise = add_noise(x) # for denoising AE
                 z, x_hat = self.ae(x)
                 optimizer.zero_grad()
@@ -180,8 +187,7 @@ class PASCode():
         km.fit_predict(z.data.cpu().numpy())
         self.clusters.data = torch.tensor(km.cluster_centers_).to(self.device)
 
-    def _train(self, X_train, y_train, lr, epoch_train, batch_size,
-            id_train=None, X_test=None, y_test=None, id_test=None):
+    def _train(self, X_train, y_train, lr, epoch_train, batch_size):
         r"""
         Training phase.
         """
@@ -198,11 +204,12 @@ class PASCode():
         # loss_p = []
         # loss_total = []
 
+        X_train = X_train.to(self.device)
+        y_train = y_train.to(self.device)
+
         # train
         optimizer = torch.optim.Adam(self.ae.parameters(), lr=lr)
-        print("----- \t ------------ \t ------------- \t ------------- \t ------------")
-        print("epoch \t (total) loss \t  cluster loss \t reconstr loss \t entropy loss")
-        print("----- \t ------------ \t ------------- \t ------------  \t ------------")
+
         for epoch in range(epoch_train):
             with torch.no_grad():
                 _, q, _ = self(X_train)
@@ -239,15 +246,22 @@ class PASCode():
                 assigns = assign_cluster(Q)
                 ent_loss = calc_entropy(assigns, y_train)
                 kl_loss = F.kl_div(Q.log(), p)
-                print("{:5} \t {:7.5f} \t {:7.5f} \t {:8.5f} \t {:7.5f} "
-                    .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
+                
+                if self.print_metrics:
+                    print("----- \t ------------ \t ------------- \t ------------- \t ------------")
+                    print("epoch \t (total) loss \t  cluster loss \t reconstr loss \t entropy loss")
+                    print("----- \t ------------ \t ------------- \t ------------  \t ------------")
+                    print("{:5} \t {:7.5f} \t {:7.5f} \t {:8.5f} \t {:7.5f} "
+                        .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
                 # loss_c.append(kl_loss.item())
                 # loss_r.append(rec_loss.item())
                 # loss_p.append(ent_loss.item())
                 # loss_total.append(kl_loss.item() + ent_loss.item() + rec_loss.item())
                 
                 # print out metrics on training and test data
-                if self.print_metrics:
+                
+                    X_train = X_train.to('cpu')
+                    y_train = y_train.to('cpu')
                     self.evaluate(X_train, y_train, self.id_train, self.X_test, self.y_test, self.id_test)
 
     def get_embedding(self, X, reducer='umap'):
@@ -278,14 +292,14 @@ class PASCode():
             "#804040", "#804080", "#408040", "#800000", "#008000", "#000080"
         ]
         n_colors = 0
-        if type(y) == type(torch.Tensor()):
-            n_colors = len(np.unique(y))
-        elif type(y) == type(pd.DataFrame()):
-            n_colors = len(np.unique(y.values))
-        elif type(y) == type(pd.Series()):
-            n_colors = len(np.unique(y.values))
-        elif type(y) == type(np.array([])):
-            n_colors = len(np.unique(y))
+        # if type(y) == type(torch.Tensor()):
+        #     n_colors = len(np.unique(y))
+        # elif type(y) == type(pd.DataFrame()):
+        #     n_colors = len(np.unique(y.values))
+        # elif type(y) == type(pd.Series()):
+        #     n_colors = len(np.unique(y.values))
+        # elif type(y) == type(np.array([])):
+        #     n_colors = len(np.unique(y))
 
         info = pd.DataFrame({
             'z1':X[:, 0],
@@ -415,18 +429,17 @@ class PASCode():
         y_true_test = info_test.groupby(['id', 'label']).size().index.to_frame()['label'].to_list()
 
         # training data
-        # clf = LogisticRegression().fit(X_new_train, y_true_train)
-        clf = RandomForestClassifier().fit(X_new_train, y_true_train)
+        clf = LogisticRegression().fit(X_new_train, y_true_train)
+        # clf = RandomForestClassifier().fit(X_new_train, y_true_train)
         y_pred_train = clf.predict(X_new_train)
-
         print("############ Training data #############")
         print("Precision:", precision_score(y_true_train, y_pred_train))
         print("Recall score:", recall_score(y_true_train, y_pred_train))
         print("F1 score:", f1_score(y_true_train, y_pred_train))
         print("Accuracy:", accuracy_score(y_true_train, y_pred_train))
         print("ROC-AUC score:", roc_auc_score(y_true_train, clf.predict_proba(X_new_train)[:, 1]))
-        print()
-        # test data
+        print("Balanced_accuracy_score:", balanced_accuracy_score(y_true_train, y_pred_train))
+        # testing data
         y_pred_test = clf.predict(X_new_test)
         print("############ Testing data #############")
         print("Precision:", precision_score(y_true_test, y_pred_test))
@@ -434,3 +447,5 @@ class PASCode():
         print("F1 score:", f1_score(y_true_test, y_pred_test))
         print("Accuracy:", accuracy_score(y_true_test, y_pred_test))
         print("ROC-AUC score:", roc_auc_score(y_true_test, clf.predict_proba(X_new_test)[:, 1]))
+        print("Balanced_accuracy_score:", balanced_accuracy_score(y_true_test, y_pred_test))
+        
