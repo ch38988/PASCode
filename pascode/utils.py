@@ -1,8 +1,3 @@
-"""
-version: Nov 17
-version: Nov 22
-
-"""
 import numpy as np
 import pandas as pd
 import torch
@@ -10,12 +5,6 @@ from torch.utils.data import Dataset
 import warnings
 warnings.filterwarnings("ignore")
 
-from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, roc_auc_score, balanced_accuracy_score
-from sklearn.ensemble import RandomForestClassifier
-
-#%%
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device('cpu')
 
 def assign_cluster(q):
     r"""
@@ -80,8 +69,8 @@ def gaussian_kernel_dist(dist):
     NOTE define the distance func.;define diff. kernels, e.g., gaussian kernel; 
     on original space or reconstructed space??
     """
-    sigmas = torch.FloatTensor([1e-2,1e-1,1,10]).to(device)
-    beta = 1. / (2. * sigmas).to(device)
+    sigmas = torch.FloatTensor([1e-2,1e-1,1,10])
+    beta = 1. / (2. * sigmas)
     s = torch.matmul(torch.reshape(beta,(len(sigmas),1)),torch.reshape(dist,(1,-1)))
     return torch.reshape(torch.sum(torch.exp(-s),dim=0),dist.size())/len(sigmas)
 
@@ -113,7 +102,7 @@ def add_noise(d): # for denoising AE
     r"""
     TODO self adding rand noise ? ref: Vincent et al. 2010 in DEC.
     """
-    noise = 0.0*torch.randn(d.size()).to(device)    # TODO 0.0?
+    noise = 0.0*torch.randn(d.size())    # TODO 0.0?
     nd = d + noise
     return nd
 
@@ -141,7 +130,6 @@ class subDataset(Dataset):
         """
         Loads and returns a sample from the dataset at the given index idx.
         """
-        return self.x[idx].to(device), \
-               self.y[idx].to(device), \
-               torch.tensor(idx).to(torch.int64).to(device)
-    
+        return self.x[idx], \
+               self.y[idx], \
+               torch.tensor(idx).to(torch.int64)

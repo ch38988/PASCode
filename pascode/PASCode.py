@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from sklearn.linear_model import LogisticRegression
+from IPython.display import clear_output
 
 import umap
 import seaborn
@@ -39,7 +40,7 @@ class PASCode():
             n_clusters=30, 
             lambda_cluster=.3, 
             lambda_phenotype=.7, 
-            device='cpu',  # cuda
+            device='cpu',
             alpha=1,
             dropout=.2
         ):
@@ -50,7 +51,7 @@ class PASCode():
         self.lambda_phenotype = lambda_phenotype
         self.dropout = dropout
         self.alpha = alpha
-        self.device = device
+        self.device = torch.device(device)
 
     def __call__(self, X):
         r"""
@@ -111,10 +112,12 @@ class PASCode():
             epoch_pretrain=7,
             epoch_train=7,                
             batch_size=1024,
-            lr=1e-4,
+            lr_pretrain=1e-3,
+            lr_train=1e-5,
             require_pretrain_phase=True,
             require_train_phase=True, 
-            print_metrics=True, # print metrics per epoch
+            print_evaluation=True, # print metrics per epoch
+            evaluation=True,
             id_train=None, X_test=None, y_test=None, id_test=None # for printing out metrics per epoch
         ):
         r"""
@@ -129,7 +132,7 @@ class PASCode():
         y_train = y_train.to(self.device)
 
         self.init_ae(X_train)
-        self.print_metrics = print_metrics
+        self.print_evaluation = print_evaluation
         # if  not (id_train==None and X_test==None and y_test==None and id_test==None).all():
         self.id_train = id_train
         self.X_test = X_test
@@ -138,11 +141,11 @@ class PASCode():
             
         if require_pretrain_phase:
             print("Pretraining...")
-            self._pretrain(X_train, lr, epoch_pretrain, batch_size)
+            self._pretrain(X_train, lr=lr_pretrain, epoch_pretrain=epoch_pretrain, batch_size=batch_size)
             print("Pretraining complete.\n")
         if require_train_phase:
             print('Training...')
-            self._train(X_train, y_train, lr, epoch_train, batch_size)
+            self._train(X_train, y_train, lr=lr_train, epoch_train=epoch_train, batch_size=batch_size, evaluation=evaluation)
             print("Training complete.\n")
 
     def _pretrain(self, X_train, lr, epoch_pretrain, batch_size, optimizer='adam'):
@@ -166,9 +169,8 @@ class PASCode():
 
         for epoch in range(epoch_pretrain):
             total_loss = 0
-            for _, x in enumerate(train_loader):
+            for x in train_loader:
                 x = x.to(self.device)
-                # x_noise = add_noise(x) # for denoising AE
                 z, x_hat = self.ae(x)
                 optimizer.zero_grad()
                 loss = F.mse_loss(x_hat, x)
@@ -183,11 +185,11 @@ class PASCode():
         torch.nn.init.kaiming_normal_(self.clusters.data) # NOTE
         with torch.no_grad():
             z, x_hat = self.ae(X_train)
-        km = sklearn.cluster.KMeans(n_clusters=self.n_clusters, n_init=20)  # TODO may change to leiden?
+        km = sklearn.cluster.KMeans(n_clusters=self.n_clusters, n_init=20)
         km.fit_predict(z.data.cpu().numpy())
         self.clusters.data = torch.tensor(km.cluster_centers_).to(self.device)
 
-    def _train(self, X_train, y_train, lr, epoch_train, batch_size):
+    def _train(self, X_train, y_train, lr, epoch_train, batch_size, evaluation):
         r"""
         Training phase.
         """
@@ -198,29 +200,41 @@ class PASCode():
             shuffle=True, 
             drop_last=True)
 
-        # # for temp eval
-        # loss_c = []
-        # loss_r =  []
-        # loss_p = []
-        # loss_total = []
+        # for eval
+        self.precision_train = []
+        self.recall_train = []
+        self.f1_train = []
+        self.accuracy_train = []
+        self.roc_auc_train = []
+        self.precision_test = []
+        self.recall_test = []
+        self.f1_test = []
+        self.accuracy_test = []
+        self.roc_auc_test = []
+        self.loss_c = []
+        self.loss_r = []
+        self.loss_p = []
+        self.loss_total = []
+        self.epochs = []
 
         X_train = X_train.to(self.device)
         y_train = y_train.to(self.device)
 
+
         # train
         optimizer = torch.optim.Adam(self.ae.parameters(), lr=lr)
-
         for epoch in range(epoch_train):
             with torch.no_grad():
                 _, q, _ = self(X_train)
             p = target_distribution(q.data)
+            self.P = p # NOTE temp
             # minibatch gradient descent to train AE
             self.ae.train()
-            for _, (x, y, idx) in enumerate(train_loader):
+            for x, y, idx in train_loader:
                 x = x.to(self.device)
-                y = torch.from_numpy(pd.get_dummies(y).to_numpy()).to(self.device)
+                y = torch.tensor(pd.get_dummies(y.cpu().numpy()).to_numpy()).to(self.device)
                 # x2 = add_noise(x)  # for denoising AE
-                x_bar, q, z = self(x)
+                x_bar, q, _ = self(x)
                 rec_loss = F.mse_loss(x_bar, x) # reconstruction loss
                 kl_loss = F.kl_div(q.log(), p[idx]) # intracluster loss/KL
 
@@ -238,31 +252,15 @@ class PASCode():
                 loss.backward()
                 optimizer.step()
 
-            # evaluation on current training epoch
-            self.ae.eval() # NOTE
-            with torch.no_grad():
-                X_bar, Q, z = self(X_train)
-                rec_loss = F.mse_loss(X_bar, X_train)
-                assigns = assign_cluster(Q)
-                ent_loss = calc_entropy(assigns, y_train)
-                kl_loss = F.kl_div(Q.log(), p)
-                
-                if self.print_metrics:
-                    print("----- \t ------------ \t ------------- \t ------------- \t ------------")
-                    print("epoch \t (total) loss \t  cluster loss \t reconstr loss \t entropy loss")
-                    print("----- \t ------------ \t ------------- \t ------------  \t ------------")
-                    print("{:5} \t {:7.5f} \t {:7.5f} \t {:8.5f} \t {:7.5f} "
-                        .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
-                # loss_c.append(kl_loss.item())
-                # loss_r.append(rec_loss.item())
-                # loss_p.append(ent_loss.item())
-                # loss_total.append(kl_loss.item() + ent_loss.item() + rec_loss.item())
-                
-                # print out metrics on training and test data
-                
-                    X_train = X_train.to('cpu')
-                    y_train = y_train.to('cpu')
-                    self.evaluate(X_train, y_train, self.id_train, self.X_test, self.y_test, self.id_test)
+                # print("----- \t ------------ \t ------------- \t ------------- \t ------------")
+                # print("epoch \t (total) loss \t  cluster loss \t reconstr loss \t entropy loss")
+                # print("----- \t ------------ \t ------------- \t ------------  \t ------------")
+                # print("{:5} \t {:7.5f} \t\t {:7.5f} \t {:8.5f} \t \t {:7.5f} "
+                #     .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
+                            
+            if evaluation:
+                self.evaluate(X_train, y_train, epoch)
+
 
     def get_embedding(self, X, reducer='umap'):
         r"""
@@ -275,7 +273,7 @@ class PASCode():
             embedding as a numpy array
         """
         z, _ = self.ae(X)
-        z = z.detach().numpy()
+        z = z.detach().cpu().numpy()
         if self.latent_dim > 2 and reducer=='umap': 
             z = umap.UMAP(n_components=2).fit_transform(z)
         if self.latent_dim > 2 and reducer=='tsne': 
@@ -292,14 +290,14 @@ class PASCode():
             "#804040", "#804080", "#408040", "#800000", "#008000", "#000080"
         ]
         n_colors = 0
-        # if type(y) == type(torch.Tensor()):
-        #     n_colors = len(np.unique(y))
-        # elif type(y) == type(pd.DataFrame()):
-        #     n_colors = len(np.unique(y.values))
-        # elif type(y) == type(pd.Series()):
-        #     n_colors = len(np.unique(y.values))
-        # elif type(y) == type(np.array([])):
-        #     n_colors = len(np.unique(y))
+        if type(y) == type(torch.Tensor()):
+            n_colors = len(np.unique(y))
+        elif type(y) == type(pd.DataFrame()):
+            n_colors = len(np.unique(y.values))
+        elif type(y) == type(pd.Series()):
+            n_colors = len(np.unique(y.values.tolist()))
+        elif type(y) == type(np.array([])):
+            n_colors = len(np.unique(y.tolist()))
 
         info = pd.DataFrame({
             'z1':X[:, 0],
@@ -330,57 +328,6 @@ class PASCode():
             _, q, __ = self(X) # get Q matrix
         return assign_cluster(q).detach().cpu().numpy()
 
-    def show_embedding(self, X, y, embd=None, title='', distinguishable_colors=False):
-        r"""
-        Args:
-            X: cell-by-gene matrix 
-            y: label
-            embedding: 2-dim embedding
-            title: title of plot
-            distinguishable_colors: require distinguishable_colors or not 
-        """
-        embd = self.get_embedding(X)
-        # NOTE specifically for snATACmeta from UCI
-        color_dict = dict({
-            'ODC':'brown',
-            'EX':'red',
-            'MG': 'green',
-            'ASC': 'purple',
-            'INH': 'blue',
-            'OPC':'orange',
-            'Unknown':'white',
-            'PER.END':'grey',
-            'AD':'orange',
-            'CTL':'blue'})
-        
-        # Generate 30 distinguishable colors using the 'viridis' colormap
-        custom_colors = [
-            "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FF8000", "#8000FF",
-            "#FF007F", "#007FFF", "#7FFF00", "#FF7F00", "#00FF7F", "#7F00FF", "#C0C0C0", "#808080",
-            "#400080", "#800040", "#804000", "#008040", "#408000", "#800080", "#408080", "#008080",
-            "#804040", "#804080", "#408040", "#800000", "#008000", "#000080"
-        ]
-        n_colors = 0
-        if type(y) == type(torch.Tensor()):
-            n_colors = len(np.unique(y))
-        elif type(y) == type(pd.DataFrame()):
-            n_colors = len(np.unique(y.values))
-        elif type(y) == type(pd.Series()):
-            n_colors = len(np.unique(y.values))
-        info = pd.DataFrame({
-            'z1':embd[:, 0],
-            'z2':embd[:, 1],
-            'hue':y,})
-        if distinguishable_colors is True:
-            seaborn.scatterplot(
-                data=info, x="z1", y="z2", 
-                hue='hue', size='hue', sizes=(3,3), palette=seaborn.color_palette(custom_colors, n_colors)).set(title=title)
-        else:
-            seaborn.scatterplot(
-                data=info, x="z1", y="z2", 
-                hue='hue', size='hue', sizes=(3,3), palette=seaborn.color_palette(n_colors=n_colors)).set(title=title)
-        plt.legend(loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=3)
-
     def get_donor_cluster_fraction_matrix(self, X, id):
         r"""
         Get donor cluster fraction matrix.
@@ -392,8 +339,10 @@ class PASCode():
         Returns:
             the donor cluster fraction matrix
         """
+
+        X = torch.tensor(X).to(self.device)
         with torch.no_grad():
-            _, q, __ = self(X) # get Q matrix
+            _, q, __ = self(X)
         assigns = assign_cluster(q).detach().cpu().numpy()
 
         info = pd.DataFrame({
@@ -409,43 +358,89 @@ class PASCode():
         dcf_mat = dcf_mat.div(dcf_mat.sum(axis=1), axis=0)
         return dcf_mat
 
-    def evaluate(self, X_train, y_train, id_train, X_test, y_test, id_test):
+    def evaluate(self, X_train, y_train, epoch):
         # get donor cluster fraction matrix from traininig data
-        X_new_train = self.get_donor_cluster_fraction_matrix(X_train, id_train)
+        X_train = X_train.cpu().numpy()
+        y_train = y_train.cpu().numpy()
+        X_new_train = self.get_donor_cluster_fraction_matrix(X_train, self.id_train)
         # get donor labels
         info_train = pd.DataFrame({
-            'id':id_train,
+            'id':self.id_train,
             'label':y_train
         })
         y_true_train = info_train.groupby(['id', 'label']).size().index.to_frame()['label'].to_list()
 
         # get donor cluster fraction matrix from testing data
-        X_new_test = self.get_donor_cluster_fraction_matrix(X_test, id_test)
+        X_new_test = self.get_donor_cluster_fraction_matrix(self.X_test, self.id_test)
         # get donor labels 
         info_test = pd.DataFrame({
-            'id':id_test,
-            'label':y_test
+            'id':self.id_test,
+            'label':self.y_test
         })
         y_true_test = info_test.groupby(['id', 'label']).size().index.to_frame()['label'].to_list()
 
-        # training data
         clf = LogisticRegression().fit(X_new_train, y_true_train)
-        # clf = RandomForestClassifier().fit(X_new_train, y_true_train)
         y_pred_train = clf.predict(X_new_train)
-        print("############ Training data #############")
-        print("Precision:", precision_score(y_true_train, y_pred_train))
-        print("Recall score:", recall_score(y_true_train, y_pred_train))
-        print("F1 score:", f1_score(y_true_train, y_pred_train))
-        print("Accuracy:", accuracy_score(y_true_train, y_pred_train))
-        print("ROC-AUC score:", roc_auc_score(y_true_train, clf.predict_proba(X_new_train)[:, 1]))
-        print("Balanced_accuracy_score:", balanced_accuracy_score(y_true_train, y_pred_train))
-        # testing data
         y_pred_test = clf.predict(X_new_test)
-        print("############ Testing data #############")
-        print("Precision:", precision_score(y_true_test, y_pred_test))
-        print("Recall score:", recall_score(y_true_test, y_pred_test))
-        print("F1 score:", f1_score(y_true_test, y_pred_test))
-        print("Accuracy:", accuracy_score(y_true_test, y_pred_test))
-        print("ROC-AUC score:", roc_auc_score(y_true_test, clf.predict_proba(X_new_test)[:, 1]))
-        print("Balanced_accuracy_score:", balanced_accuracy_score(y_true_test, y_pred_test))
-        
+
+        # training data
+        self.precision_train.append(precision_score(y_true_train, y_pred_train))
+        self.recall_train.append(recall_score(y_true_train, y_pred_train))
+        self.f1_train.append(f1_score(y_true_train, y_pred_train))
+        self.accuracy_train.append(accuracy_score(y_true_train, y_pred_train))
+        self.roc_auc_train.append(roc_auc_score(y_true_train, clf.predict_proba(X_new_train)[:, 1]))
+
+        # testing data
+        self.precision_test.append(precision_score(y_true_test, y_pred_test))
+        self.recall_test.append(recall_score(y_true_test, y_pred_test))
+        self.f1_test.append(f1_score(y_true_test, y_pred_test))
+        self.accuracy_test.append(accuracy_score(y_true_test, y_pred_test))
+        self.roc_auc_test.append(roc_auc_score(y_true_test, clf.predict_proba(X_new_test)[:, 1]))
+
+        # evaluation on current training epoch
+        X_train = torch.tensor(X_train).to(self.device)
+        y_train = torch.tensor(y_train).to(self.device)
+
+        self.ae.eval()
+        with torch.no_grad():
+            X_bar, Q, z = self(X_train)
+            rec_loss = F.mse_loss(X_bar, X_train)
+            assigns = assign_cluster(Q)
+            ent_loss = calc_entropy(assigns, torch.tensor(y_train, device=self.device)) # numpy type
+            kl_loss = F.kl_div(Q.log(), self.P)
+
+            self.loss_c.append(kl_loss.item())
+            self.loss_r.append(rec_loss.item())
+            self.loss_p.append(ent_loss)
+            self.loss_total.append(kl_loss.item() + ent_loss + rec_loss.item())
+
+        # plot
+        if self.print_evaluation:
+            epochs = np.arange(1, epoch+2)
+            clear_output(wait=True)
+            fig, axes = plt.subplots(nrows=3, ncols=3, figsize=(12, 12))
+            axes[0,0].plot(epochs, self.loss_total, label='total loss')
+            axes[0,0].legend(loc='lower left')
+            axes[0,1].plot(epochs, self.loss_p, label="ent loss")
+            axes[0,1].legend(loc='lower left')
+            axes[0,2].plot(epochs, self.loss_c, label="cluster loss")
+            axes[0,2].legend(loc='lower left')
+            axes[1,0].plot(epochs, self.loss_r, label="recstr loss")
+            axes[1,0].legend(loc='lower left')
+            axes[1,1].plot(epochs, self.accuracy_train, label='accuracy')
+            axes[1,1].plot(epochs, self.accuracy_test, label='val accuracy')
+            axes[1,1].legend(loc='lower left')
+            axes[1,2].plot(epochs, self.roc_auc_train, label='roc-auc')
+            axes[1,2].plot(epochs, self.roc_auc_test, label='val roc-auc')
+            axes[1,2].legend(loc='lower left')
+            axes[2,0].plot(epochs, self.precision_train, label='precision')
+            axes[2,0].plot(epochs, self.precision_test, label='val precision')
+            axes[2,0].legend(loc='lower left')
+            axes[2,1].plot(epochs, self.recall_train, label='recall')
+            axes[2,1].plot(epochs, self.recall_test, label='val recall')
+            axes[2,1].legend(loc='lower left')
+            axes[2,2].plot(epochs, self.f1_train, label='f1-score')
+            axes[2,2].plot(epochs, self.f1_test, label='val f1-score')
+            axes[2,2].legend(loc='lower left')
+            plt.tight_layout()
+            plt.show()
