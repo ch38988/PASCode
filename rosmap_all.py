@@ -15,43 +15,47 @@ import numpy as np
 import pandas as pd
 import pyreadr
 
-torch.manual_seed(2023)
+torch.manual_seed(2022)
 # torch.backends.cudnn.deterministic = True
 # torch.backends.cudnn.benchmark = False
-
-device = torch.device('cuda') # NOTE!
+device = torch.device('cuda')
 
 # %%
 ############################################################################### 
-########################## Data reading (Custom) ##############################
+################################### Data reading ##############################
 ###############################################################################
+data_path = '/home/athan/PASCode/data/mit.self.org.RData'
 print("Reading data...")
-import pickle as pkl
-with open('/home/athan/PASCode/data/TB/dTB2.batch.corrected.pkl','rb') as f: 
-    [gxp01,gxp02,meta] = pkl.load(f)
-print("Reading complete.")
+rdata = pyreadr.read_r(data_path)
 
-############################################################################### 
-########################## Data preprocessing (Custom) ########################
-###############################################################################
-#%%
-gxp = pd.concat([gxp01, gxp02])
-gxp = gxp.T
-meta.index=meta['cell_id']
-#normalize & scale # NOTE default is axis=0; should scaling by feature axis
-scaler = preprocessing.StandardScaler().fit(gxp)
-#scaler = preprocessing.MinMaxScaler().fit(gxp)
-gxp = scaler.transform(gxp)
-X = gxp
-lab = meta
-pheno_name='TB_status'
-sampleID_name = 'donor'
-lab[pheno_name].replace({"CASE":1, "CONTROL":0}, inplace=True)
-
-#%%
+# %%
 ############################################################################### 
 ################################### Data preprocessing ########################
 ###############################################################################
+print('Preprocessing data...')
+gxp = pd.concat([rdata['gexpr_AD'], rdata['gexpr_CTL']])
+lab = pd.concat([rdata['AD_cells'], rdata['CTL_cells']])
+lab.index=lab.TAG
+# phenotype is AD(1)/CTL(0)
+lab['AD'] = [1]*rdata['gexpr_AD'].shape[0] + [0]*rdata['gexpr_CTL'].shape[0]
+# select Highly Variable Genes from gene expression data
+print("Selecting HVGs...")
+agxp = anndata.AnnData(gxp)
+sc.pp.highly_variable_genes(agxp, min_mean=.0125, max_mean=3, min_disp=.25)
+gxp = gxp.loc[:, agxp.var.highly_variable]
+# scaling
+print("Scaling...")
+scaler = preprocessing.StandardScaler().fit(gxp)
+scaled_features = scaler.transform(gxp)
+X = pd.DataFrame(scaled_features, columns=gxp.columns, index=gxp.index)
+print("Data preprocessing completed.")
+
+# %%
+############################################################################### 
+######################### train, test, validation sets ########################
+###############################################################################
+pheno_name = 'AD'
+sampleID_name = 'subjectID'
 # get sample IDs and phenotypes (list)
 group = lab.groupby([sampleID_name, pheno_name]).size()
 group = group[group>0] # filtering
@@ -75,73 +79,35 @@ X = pd.DataFrame(X)
 ############################### Cross validation ##############################
 ############################################################################### 
 # prepare data
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=2023)
-cv_accuracy = []
-# cv_aucroc = []
+skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+cv_acc = np.array([])
 iter_num = 0
 
-for train_index, test_index in skf.split(train_test_set['donor'], train_test_set[pheno_name]):
+for train_index, test_index in skf.split(train_test_set['subjectID'], train_test_set['AD']):
     iter_num += 1
-    print('\n', '#'*39 + " Fold " + str(iter_num) + ' ' + '#'*39)
-    print("Training index:", train_index, "\n Testing index:", test_index, '\n')
+    print('#'*39 + " Fold " + str(iter_num) + ' ' + '#'*39)
+    print("Training index:", train_index, "\ntraining index:", test_index)
 
-    train_sample = [train_test_set['donor'][i] for i in train_index]
-    test_sample = [train_test_set['donor'][i] for i in test_index]
-    train_filter = lab['donor'].isin(train_sample).values
-    test_filter = lab['donor'].isin(test_sample).values
+    train_sample = [train_test_set['subjectID'][i] for i in train_index]
+    test_sample = [train_test_set['subjectID'][i] for i in test_index]
+    train_filter = lab['subjectID'].isin(train_sample).values
+    test_filter = lab['subjectID'].isin(test_sample).values
 
     X_train = torch.tensor(X.loc[train_filter].values).float().to(device)
     lab_train = lab[train_filter]
-    id_train = lab_train['donor'].values
-    y_train = torch.tensor(lab_train[pheno_name].values)
+    id_train = lab_train['subjectID'].values
+    y_train = torch.tensor(lab_train['AD'].values)
     X_test = torch.tensor(X.loc[test_filter].values).float().to(device)
     lab_test = lab[test_filter]
-    id_test = lab_test['donor'].values
-    y_test = torch.tensor(lab_test[pheno_name].values)
+    id_test = lab_test['subjectID'].values
+    y_test = torch.tensor(lab_test['AD'].values)
     
     # use model
-    psc = PASCode(            
-            latent_dim=16,
-            n_clusters=50, 
-            lambda_cluster=.3, 
-            lambda_phenotype=1, 
-            device='cuda:0', 
-            alpha=1,
-            dropout=.2)
+    psc = PASCode()
+    psc.train(X_train, y_train)
 
-    psc.train(
-            X_train, 
-            y_train,
-            epoch_pretrain=30, # NOTE
-            epoch_train=24,            
-            batch_size=2**10,
-            lr_pretrain=1e-4,
-            lr_train=1e-5,
-            require_pretrain_phase=True,
-            require_train_phase=True, 
-            evaluation=True,
-            plot_evaluation=True, # print metrics per epoch
-            id_train=id_train, X_test=X_test, y_test=y_test, id_test=id_test
-            )
-
-    cv_accuracy.append(psc.accuracy_test) # get val accuracy
-    # torch.cuda.empty_cache() # free up mem
-
-np.mean(cv_accuracy)
-# %% [markdown]
-# # Grid search on CV
-
-# %%
-# latent_dim=[2,3,2**2,2**3,2**4,2**5,2**6,2**7],
-# n_clusters=[30,40,50], 
-# lambda_cluster=[.3,0.1,0.5,0.8,0.95], 
-# lambda_phenotype=[0.5,0.8,1], 
-# epoch_pretrain=[10,15,20],
-# epoch_train=[13,17,24],  
-# batch_size=[2**8, 2**9, 2**10, 2**11, 2**12, 2**13, 2**14, 2**15, 2**16]
-# lr=[1e-3, 1e-4, 1e-5]
-
-
+    # perforamce
+    psc.evaluate(X_train, y_train, id_train, X_test, y_test, id_test)
 
 # %% [markdown]
 # # Visualization
@@ -196,15 +162,20 @@ embd_test = psc.get_embedding(X_test, reducer='umap')
 
 # %%
 # On training data
-lab_train['assign'] = psc.get_assigns(X_train)
+lab_train['assign'] = psc.get_assigns(X_train.to(device))
 psc.plot_embedding(X=embd_train, y=lab_train['assign'].values, label='assign', title='assign (train)', require_distinguishable_colors=True)
 
 # %%
-psc.plot_embedding(X=embd_train, y=lab_train['TB_status'].values, label='TB_status', title='TB_status (train)', require_distinguishable_colors=False)
+psc.plot_embedding(X=embd_train, y=lab_train['braaksc'].values, label='braak', title='braak (train)', require_distinguishable_colors=False)
+
 # %%
-psc.plot_embedding(X=embd_train, y=lab_train['cluster_ids'].values, label='cluster_ids', title='cluster_ids (train)', require_distinguishable_colors=False)
+psc.plot_embedding(X=embd_train, y=lab_train['AD'].values, label='AD', title='AD (train)', require_distinguishable_colors=False)
+
 # %%
-psc.plot_embedding(X=embd_train, y=lab_train['cluster_name'].values, label='cluster_name', title='cluster_name (train)', require_distinguishable_colors=False)
+psc.plot_embedding(X=embd_train, y=lab_train['broad.cell.type'].values, label='broad celltype', title='broad celltype (train)', require_distinguishable_colors=False)
+
+# %%
+psc.plot_embedding(X=embd_train, y=lab_train['Subcluster'].values, label='subcelltype', title='sub celltype (train)', require_distinguishable_colors=False)
 
 # %%
 # on test data
@@ -315,5 +286,6 @@ psc.plot_embedding(X=embd_test, y=lab_test['Subcluster'].values, label='subcellt
 
 
 # %%
+
 
 
