@@ -5,6 +5,8 @@ from torch.utils.data import Dataset
 import warnings
 warnings.filterwarnings("ignore")
 
+device = 'cuda'
+
 def assign_cluster(q):
     r"""
     Assign cells to clusters based on softmax.
@@ -43,14 +45,27 @@ def calc_entropy(q, y):
         q: 
         y: 
     """
-    assigns = assign_cluster(q)
-    centroids = torch.unique(assigns) # assigned centroids
-    ent = 0
-    for centroid in centroids:
-        counts = torch.unique(y[assigns==centroid], return_counts=True)[1]
-        p = counts / torch.sum(counts)
-        ent += torch.sum(-p*torch.log(p))
-    return ent / centroids.shape[0]
+    y = torch.tensor(pd.get_dummies(y.cpu().numpy()).to_numpy()).to(device)
+    wpheno = q.T@y.float() + 1e-9 # weighted phenotype by clusters. add 1e-9 to prevent log(0)
+    wpheno /= wpheno.sum(dim=1, keepdim=True)               
+    ent = torch.mean(-1*torch.sum(wpheno*wpheno.log(), 1))
+    return ent
+
+    # # NOTE the old way: bad performance
+    # assigns = assign_cluster(q)
+    # centroids = torch.unique(assigns) # assigned centroids
+    # ent = 0
+    # for centroid in centroids:
+    #     counts = torch.unique(y[assigns==centroid], return_counts=True)[1]
+    #     p = counts / torch.sum(counts)
+    #     ent += torch.sum(-p*torch.log(p))
+    # return ent / centroids.shape[0]
+
+
+
+
+
+
 
 # def gaussian_kernel_dist(dist):
 #     """

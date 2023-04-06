@@ -236,10 +236,10 @@ class PASCode():
                 # x2 = add_noise(x)  # for denoising AE
                 x_bar, q, _ = self(x)
                 rec_loss = F.mse_loss(x_bar, x) # AE reconstruction loss
-                kl_loss = F.kl_div(q.log(), p[idx], reduction='batchmean') # KL-div loss # NOTE "reduction = 'mean' doesn’t return the true kl divergence value, please use reduction = 'batchmean' which aligns with KL math definition. In the next major release, 'mean' will be changed to be the same as ‘batchmean’."
+                kl_loss = F.kl_div(q.log(), p[idx]) # KL-div loss # NOTE do not use reduction='batchmean', it will significantly lower performance (why?)
                 # phenotype entropy loss
                 ent_loss = calc_entropy(q, y)
-                
+        
                 # total joint loss
                 loss = self.lambda_cluster*kl_loss + self.lambda_phenotype*ent_loss + rec_loss
 
@@ -247,11 +247,11 @@ class PASCode():
                 loss.backward()
                 optimizer.step()
 
-                # print("----- \t ------------ \t ------------- \t ------------- \t ------------")
-                # print("epoch \t (total) loss \t  cluster loss \t reconstr loss \t entropy loss")
-                # print("----- \t ------------ \t ------------- \t ------------  \t ------------")
-                # print("{:5} \t {:7.5f} \t\t {:7.5f} \t {:8.5f} \t \t {:7.5f} "
-                #     .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
+            # print("----- \t ------------ \t ------------- \t ------------- \t ------------")
+            # print("epoch \t (total) loss \t  cluster loss \t reconstr loss \t entropy loss")
+            # print("----- \t ------------ \t ------------- \t ------------  \t ------------")
+            # print("{:5} \t {:7.5f} \t\t {:7.5f} \t {:8.5f} \t \t {:7.5f} "
+            #     .format(epoch, loss.item(), kl_loss.item(), rec_loss.item(), ent_loss.item()))
                             
             if self.evaluation:
                 self.evaluate(X_train, y_train, epoch)
@@ -413,7 +413,7 @@ class PASCode():
         if self.plot_evaluation:
             epochs = np.arange(1, epoch+2)
             clear_output(wait=True)
-            fig, axes = plt.subplots(nrows=3, ncols=3, figsize=(12, 12))
+            fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(15, 15))
             axes[0,0].plot(epochs, self.loss_total, label='total loss')
             axes[0,0].legend(loc='lower left')
             axes[0,1].plot(epochs, self.loss_p, label="ent loss")
@@ -428,14 +428,14 @@ class PASCode():
             axes[1,2].plot(epochs, self.roc_auc_train, label='roc-auc')
             axes[1,2].plot(epochs, self.roc_auc_test, label='val roc-auc')
             axes[1,2].legend(loc='lower left')
-            axes[2,0].plot(epochs, self.precision_train, label='precision')
-            axes[2,0].plot(epochs, self.precision_test, label='val precision')
-            axes[2,0].legend(loc='lower left')
-            axes[2,1].plot(epochs, self.recall_train, label='recall')
-            axes[2,1].plot(epochs, self.recall_test, label='val recall')
-            axes[2,1].legend(loc='lower left')
-            axes[2,2].plot(epochs, self.f1_train, label='f1-score')
-            axes[2,2].plot(epochs, self.f1_test, label='val f1-score')
-            axes[2,2].legend(loc='lower left')
+            # axes[2,0].plot(epochs, self.precision_train, label='precision')
+            # axes[2,0].plot(epochs, self.precision_test, label='val precision')
+            # axes[2,0].legend(loc='lower left')
+            # axes[2,1].plot(epochs, self.recall_train, label='recall')
+            # axes[2,1].plot(epochs, self.recall_test, label='val recall')
+            # axes[2,1].legend(loc='lower left')
+            # axes[2,2].plot(epochs, self.f1_train, label='f1-score')
+            # axes[2,2].plot(epochs, self.f1_test, label='val f1-score')
+            # axes[2,2].legend(loc='lower left')
             plt.tight_layout()
             plt.show()

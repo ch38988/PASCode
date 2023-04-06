@@ -24,7 +24,7 @@ device = torch.device('cuda')
 ############################################################################### 
 ################################### Data reading ##############################
 ###############################################################################
-data_path = '/home/athan/PASCode/data/mit.self.org.RData'
+data_path = '/home/che82/Desktop/mit.self.org.RData'
 print("Reading data...")
 rdata = pyreadr.read_r(data_path)
 
@@ -62,7 +62,7 @@ group = group[group>0] # filtering
 id_pheno = group.index.to_frame()
 sample_num = id_pheno.shape[0]
 # validation set: 64 donors with donor and phenotype labels
-val_size = 0.2 # NOTE
+val_size = 1/6 # NOTE
 val_num_half = int(sample_num*val_size / 2)
 val_set = pd.DataFrame({
     sampleID_name:random.sample(list(id_pheno[id_pheno[pheno_name]==0][sampleID_name]), val_num_half) 
@@ -80,7 +80,7 @@ X = pd.DataFrame(X)
 ############################################################################### 
 # prepare data
 skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
-cv_acc = np.array([])
+cv_accuracy = []
 iter_num = 0
 
 for train_index, test_index in skf.split(train_test_set['subjectID'], train_test_set['AD']):
@@ -103,11 +103,32 @@ for train_index, test_index in skf.split(train_test_set['subjectID'], train_test
     y_test = torch.tensor(lab_test['AD'].values)
     
     # use model
-    psc = PASCode()
-    psc.train(X_train, y_train)
+    psc = PASCode(            
+            latent_dim=3,
+            n_clusters=30, 
+            lambda_cluster=2, 
+            lambda_phenotype=3, 
+            device='cuda:0', 
+            alpha=1,
+            dropout=.2)
 
-    # perforamce
-    psc.evaluate(X_train, y_train, id_train, X_test, y_test, id_test)
+    psc.train(
+            X_train, 
+            y_train,
+            epoch_pretrain=7, # NOTE
+            epoch_train=7,            
+            batch_size=2**10,
+            lr_pretrain=1e-4,
+            lr_train=1e-5,
+            require_pretrain_phase=True,
+            require_train_phase=True, 
+            evaluation=True,
+            plot_evaluation=True, # print metrics per epoch
+            id_train=id_train, X_test=X_test, y_test=y_test, id_test=id_test
+            )
+    cv_accuracy.append(psc.accuracy_test) # get val accuracy
+
+np.mean(cv_accuracy)
 
 # %% [markdown]
 # # Visualization

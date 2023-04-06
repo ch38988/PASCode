@@ -27,7 +27,7 @@ device = torch.device('cuda') # NOTE!
 ###############################################################################
 print("Reading data...")
 import pickle as pkl
-with open('/home/athan/PASCode/data/TB/dTB2.batch.corrected.pkl','rb') as f: 
+with open('/home/che82/project/scACC/TBdata/dTB2.batch.corrected.pkl','rb') as f: 
     [gxp01,gxp02,meta] = pkl.load(f)
 print("Reading complete.")
 
@@ -103,8 +103,8 @@ for train_index, test_index in skf.split(train_test_set['donor'], train_test_set
     psc = PASCode(            
             latent_dim=16,
             n_clusters=50, 
-            lambda_cluster=.3, 
-            lambda_phenotype=1, 
+            lambda_cluster=2, 
+            lambda_phenotype=3, 
             device='cuda:0', 
             alpha=1,
             dropout=.2)
@@ -114,7 +114,7 @@ for train_index, test_index in skf.split(train_test_set['donor'], train_test_set
             y_train,
             epoch_pretrain=30, # NOTE
             epoch_train=24,            
-            batch_size=2**10,
+            batch_size=2**14,
             lr_pretrain=1e-4,
             lr_train=1e-5,
             require_pretrain_phase=True,
