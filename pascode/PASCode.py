@@ -65,37 +65,106 @@ class PASCode():
         q = calc_q(z, self.clusters, self.alpha)
         return X_bar, q, z
 
-    class _AE(nn.Module):
-        r"""
-        AutoEncoder module of PASCode.
-        """
-        def __init__(self, latent_dim, input_dim=None, dropout=.2):
+    class _VAE(nn.Module):
+        def __init__(self, input_dim, latent_dim, dropout):
             super().__init__()
+            self.dropout = dropout
 
-            self.encoder = torch.nn.Sequential(
+            self.encoder = nn.Sequential(
                 nn.Linear(input_dim, 1024),
+                nn.BatchNorm1d(1024),
                 nn.ReLU(),
+                nn.Dropout(self.dropout),
                 nn.Linear(1024, 512),
+                nn.BatchNorm1d(512),
                 nn.ReLU(),
+                nn.Dropout(self.dropout),
                 nn.Linear(512, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(),
-                nn.Linear(256, latent_dim),
+                nn.Dropout(self.dropout)
             )
-            self.decoder = torch.nn.Sequential(
+
+            self.fc_mu = nn.Linear(256, latent_dim)
+            self.fc_logvar = nn.Linear(256, latent_dim)
+
+            self.decoder = nn.Sequential(
                 nn.Linear(latent_dim, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(),
-                nn.Dropout(dropout),
+                nn.
                 nn.Linear(256, 512),
+                nn.BatchNorm1d(512),
                 nn.ReLU(),
+                nn.Dropout(self.dropout),
                 nn.Linear(512, 1024),
+                nn.BatchNorm1d(1024),
                 nn.ReLU(),
-                nn.Linear(1024, input_dim)
+                nn.Dropout(self.dropout),
+                nn.Linear(1024, input_dim),
+                nn.BatchNorm1d(input_dim),
+                nn.Sigmoid()  # or nn.Sigmoid() if your input data is in the range of [0, 1]
             )
-        
+
+        def encode(self, x):
+            h = self.encoder(x)
+            mu = self.fc_mu(h)
+            logvar = self.fc_logvar(h)
+            return mu, logvar
+
+        def reparameterize(self, mu, logvar):
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            return mu + eps * std
+
+        def decode(self, z):
+            return self.decoder(z)
+
         def forward(self, x):
-            z = self.encoder(x)
-            x_hat = self.decoder(z)
-            return z, x_hat
+            mu, logvar = self.encode(x)
+            z = self.reparameterize(mu, logvar)
+            # return self.decode(z), mu, logvar
+        
+
+    # class _AE(nn.Module):
+    #     r"""
+    #     AutoEncoder module of PASCode.
+    #     """
+    #     def __init__(self, latent_dim, input_dim=None, dropout=.2):
+    #         super().__init__()
+    #         self.dropout = dropout
+    #         self.encoder = nn.Sequential(
+    #             nn.Linear(input_dim, 1024),
+    #             nn.BatchNorm1d(1024), # remove?
+    #             nn.ReLU(),
+    #             nn.Dropout(self.dropout),
+    #             nn.Linear(1024, 512),
+    #             nn.BatchNorm1d(512),
+    #             nn.ReLU(),
+    #             nn.Dropout(self.dropout),
+    #             nn.Linear(512, 256),
+    #             nn.BatchNorm1d(256),
+    #             nn.ReLU(),
+    #             nn.Linear(256, latent_dim)
+    #         )
+    #         self.decoder = nn.Sequential(
+    #             nn.Linear(latent_dim, 256),
+    #             nn.BatchNorm1d(256),
+    #             nn.ReLU(),
+    #             nn.Linear(256, 512),
+    #             nn.BatchNorm1d(512),
+    #             nn.ReLU(),
+    #             nn.Linear(512, 1024),
+    #             nn.BatchNorm1d(1024),
+    #             nn.ReLU(),
+    #             nn.Linear(1024, input_dim),
+    #             nn.Sigmoid(), # for input data in the range [0,1] 
+    #         )
+        
+    #     def forward(self, x):
+    #         z = self.encoder(x)
+    #         x_hat = self.decoder(z)
+    #         return z, x_hat
         
     def init_ae(self, X_train):
         r"""
@@ -111,7 +180,7 @@ class PASCode():
             X_train, 
             y_train, 
             epoch_pretrain=7,
-            epoch_train=7,                
+            epoch_train=7, # do not train too many epochs, it may improve accuracy but will not make sense biologically
             batch_size=1024,
             lr_pretrain=1e-3,
             lr_train=1e-5,
@@ -119,7 +188,8 @@ class PASCode():
             require_train_phase=True, 
             evaluation=True,
             plot_evaluation=True, # plot metics per epoch
-            id_train=None, X_test=None, y_test=None, id_test=None # for printing out metrics per epoch
+            id_train=None, X_test=None, y_test=None, id_test=None, # for printing out metrics per epoch
+            fold_num=None,
         ):
         r"""
         Train PASCode model, including pretraining phase and training phases
@@ -140,6 +210,9 @@ class PASCode():
         self.X_test = X_test
         self.y_test = y_test
         self.id_test = id_test
+
+        self.epoch_train = epoch_train
+        self.fold_num = fold_num
             
         if require_pretrain_phase:
             print("Pretraining...")
@@ -167,7 +240,6 @@ class PASCode():
             optimizer = torch.optim.Adam(self.ae.parameters(), lr=lr)
         elif optimizer == '?': # TODO
             NotImplemented
-        rec_loss = []
 
         for epoch in range(epoch_pretrain):
             total_loss = 0
@@ -179,8 +251,19 @@ class PASCode():
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            print("epoch {}\t\t loss={:.4f}".format(epoch, total_loss/len(train_loader)))
-            rec_loss.append(loss.item())
+            # print("epoch {}\t\t loss={:.4f}".format(epoch, total_loss/len(train_loader)))
+
+            epochs = np.arange(1, epoch+2)
+            clear_output(wait=True)
+            from matplotlib.ticker import MaxNLocator
+            plt.plot(epochs,  total_loss/len(train_loader), label='rec_loss')
+            plt.legend(loc='lower left')
+            plt.xaxis.set_major_locator(MaxNLocator(integer=True))
+            plt.tight_layout()
+            plt.show()
+        if self.fold_num != None and epoch == self.epoch_pretrain - 1:
+            plt.draw() # NOTE
+            plt.savefig('figures/pretrain_fold_{}.png'.format(self.fold_num))
 
         print("Initializing cluster centroids...")
         self.clusters = torch.nn.Parameter(torch.Tensor(self.n_clusters, self.latent_dim))
@@ -241,7 +324,7 @@ class PASCode():
                 ent_loss = calc_entropy(q, y)
         
                 # total joint loss
-                loss = self.lambda_cluster*kl_loss + self.lambda_phenotype*ent_loss + rec_loss
+                loss = self.lambda_cluster*kl_loss + self.lambda_phenotype*ent_loss + rec_loss 
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -413,21 +496,27 @@ class PASCode():
         if self.plot_evaluation:
             epochs = np.arange(1, epoch+2)
             clear_output(wait=True)
-            fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(15, 15))
+            fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(13, 13))
+            from matplotlib.ticker import MaxNLocator
             axes[0,0].plot(epochs, self.loss_total, label='total loss')
             axes[0,0].legend(loc='lower left')
+            axes[0,0].xaxis.set_major_locator(MaxNLocator(integer=True))
             axes[0,1].plot(epochs, self.loss_p, label="ent loss")
             axes[0,1].legend(loc='lower left')
+            axes[0,1].xaxis.set_major_locator(MaxNLocator(integer=True))
             axes[0,2].plot(epochs, self.loss_c, label="cluster loss")
             axes[0,2].legend(loc='lower left')
+            axes[0,2].xaxis.set_major_locator(MaxNLocator(integer=True))
             axes[1,0].plot(epochs, self.loss_r, label="recstr loss")
             axes[1,0].legend(loc='lower left')
+            axes[1,0].xaxis.set_major_locator(MaxNLocator(integer=True))
             axes[1,1].plot(epochs, self.accuracy_train, label='accuracy')
             axes[1,1].plot(epochs, self.accuracy_test, label='val accuracy')
             axes[1,1].legend(loc='lower left')
-            axes[1,2].plot(epochs, self.roc_auc_train, label='roc-auc')
-            axes[1,2].plot(epochs, self.roc_auc_test, label='val roc-auc')
-            axes[1,2].legend(loc='lower left')
+            axes[1,1].xaxis.set_major_locator(MaxNLocator(integer=True))
+            # axes[1,2].plot(epochs, self.roc_auc_train, label='roc-auc')
+            # axes[1,2].plot(epochs, self.roc_auc_test, label='val roc-auc')
+            # axes[1,2].legend(loc='lower left')
             # axes[2,0].plot(epochs, self.precision_train, label='precision')
             # axes[2,0].plot(epochs, self.precision_test, label='val precision')
             # axes[2,0].legend(loc='lower left')
@@ -439,3 +528,6 @@ class PASCode():
             # axes[2,2].legend(loc='lower left')
             plt.tight_layout()
             plt.show()
+            if self.fold_num != None and epoch == self.epoch_train - 1:
+                plt.draw() # NOTE
+                fig.savefig('figures/train_fold_{}.png'.format(self.fold_num))
