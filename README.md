@@ -8,18 +8,18 @@ Python=3.9.0
 ## Create an instance
 
 ```python
-from pascode import PASCode
-psc = PASCode()
+import PASCode
+pascode = PASCode.PASCode()
 ```
 Or,
 ```python
-import pascode
-psc = pscode.PASCode()
+from PASCode import PAScode
+pascode = PASCode()
 ```
 
 To set hyperparameters:
 ```python
-psc = PASCode(latent_dim=3, 
+pascode = PASCode(latent_dim=3, 
               n_clusters=30, 
               lambda_cluster=.3, 
               lambda_phenotype=.7, 
@@ -31,11 +31,11 @@ psc = PASCode(latent_dim=3,
 
 ## Train
 ```python
-psc.train(X_train, y_train)
+pascode.train(X_train, y_train)
 ```
 To set hyperparameters:
 ```python
-psc.train(X_train,
+pascode.train(X_train,
           y_train,
           epoch_pretrain=7,
           epoch_train=7,                
@@ -49,7 +49,7 @@ psc.train(X_train,
 To use the trained model, one can call the the method _get_donor_clustering_matrix_ as follows. 
 
 ```python
-X_new = psc.get_donor_clustering_matrix(X, id)
+X_new = pascode.get_donor_clustering_matrix(X, id)
 ```
 
 $X$ is a gene-by-cell matrix. The rows of this matrix are single cell identification strings (e.g., barcodes), the columns are genes, and the entries are gene expression levels.
@@ -61,11 +61,11 @@ Returned is a matrix of which the rows are donor IDs, the columns are cluster in
 ## Visualization
 
 ```python
-embd_train = psc.get_embedding(X_train, reducer='umap')
-embd_test = psc.get_embedding(X_test, reducer='umap')
+embd_train = pascode.get_embedding(X_train, reducer='umap')
+embd_test = pascode.get_embedding(X_test, reducer='umap')
 ```
 
 ```python
 # On training data
-psc.plot_embedding(X=embd_train, y=lab_train['AD'].values, label='AD', title='AD (train)', require_distinguishable_colors=False)
+pascode.plot_embedding(X=embd_train, y=lab_train['AD'].values, label='AD', title='AD (train)', require_distinguishable_colors=False)
 ```     
